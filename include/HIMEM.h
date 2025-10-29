@@ -9,6 +9,20 @@
 struct struct_FileInfo;
 
 namespace HIMEMLIB {
+    // Error codes for HIMEM operations
+    enum class HimemError {
+        SUCCESS = 0,
+        FILE_TOO_LARGE = -1,
+        FILENAME_TOO_LONG = -2,
+        MAX_FILES_REACHED = -3,
+        INSUFFICIENT_MEMORY = -4,
+        INVALID_ID = -5,
+        INITIALIZATION_FAILED = -6
+    };
+
+    // Utility function to convert error codes to strings
+    const char* errorToString(HimemError error);
+
     /**
      * High Memory (HIMEM) File System
      * Provides file storage and retrieval functionality using ESP32 HIMEM

@@ -3,6 +3,8 @@
 // Configuration Constants
 #define MAX_BUFFERS 100
 #define MAX_FILENAME_LEN 40
+#define BYTES_PER_KILOBYTE 1024
+#define FILENAME_NULL_TERMINATOR 1
 
 // File Information Structure
 struct struct_FileInfo {
@@ -31,6 +33,22 @@ uint16_t cPage = 0;                        // Current page for new writes
 uint16_t cOffset = 0;                      // Current offset within page
 
 namespace HIMEMLIB {
+
+    /**
+     * Convert HimemError to human-readable string
+     */
+    const char* errorToString(HimemError error) {
+        switch (error) {
+            case HimemError::SUCCESS: return "Success";
+            case HimemError::FILE_TOO_LARGE: return "File too large";
+            case HimemError::FILENAME_TOO_LONG: return "Filename too long";
+            case HimemError::MAX_FILES_REACHED: return "Maximum files reached";
+            case HimemError::INSUFFICIENT_MEMORY: return "Insufficient memory";
+            case HimemError::INVALID_ID: return "Invalid file ID";
+            case HimemError::INITIALIZATION_FAILED: return "Initialization failed";
+            default: return "Unknown error";
+        }
+    }
 
     /**
      * Constructor - Initialize HIMEM file system
@@ -80,15 +98,15 @@ namespace HIMEMLIB {
         if (fileName.length() >= MAX_FILENAME_LEN) {
             ESP_LOGE("writeFile", "File %s name too long, max is %d characters", 
                 fileName.c_str(), MAX_FILENAME_LEN - 1);
-            return -1;
+            return static_cast<int>(HimemError::FILENAME_TOO_LONG);
         }
         if (fileIndex + 1 >= MAX_FILES) {
             ESP_LOGE("writeFile", "Maximum number of files reached %d", MAX_FILES);
-            return -1;
+            return static_cast<int>(HimemError::MAX_FILES_REACHED);
         }
         if (himemSize - cPage * ESP_HIMEM_BLKSZ - cOffset < bytes) {
             ESP_LOGE("writeFile", "File is larger than available HIMEM");
-            return -1;
+            return static_cast<int>(HimemError::INSUFFICIENT_MEMORY);
         }
     /* Save File Information */
         ESP_ERROR_CHECK(esp_himem_map(memptr, rangeptr, lastPage * ESP_HIMEM_BLKSZ, 0, ESP_HIMEM_BLKSZ, 0, (void**)&records));
@@ -136,7 +154,7 @@ namespace HIMEMLIB {
     /* Check for Errors */
         if (id < 0 || id >= fileIndex) {
             ESP_LOGE("readFile", "Invalid file ID %d", id);
-            return 0;
+            return static_cast<uint32_t>(HimemError::INVALID_ID);
         }
     /* Retrieve File Information */
         ESP_ERROR_CHECK(esp_himem_map(memptr, rangeptr, lastPage * ESP_HIMEM_BLKSZ, 0, ESP_HIMEM_BLKSZ, 0, (void**)&records));
@@ -147,33 +165,29 @@ namespace HIMEMLIB {
         ESP_ERROR_CHECK(esp_himem_unmap(rangeptr, records, ESP_HIMEM_BLKSZ));
 
     /* Read File from HIMEM */
-        uint8_t *ptr = nullptr;
-        ESP_ERROR_CHECK(esp_himem_map(memptr, rangeptr, page*ESP_HIMEM_BLKSZ, 0, ESP_HIMEM_BLKSZ, 0, (void**)&ptr));
-        if (offset + fileSize <= ESP_HIMEM_BLKSZ) {
-            memcpy(buf, ptr + offset, fileSize - 1);
+        uint32_t bytesToRead = fileSize;
+        uint32_t bufferOffset = 0;
+        uint16_t currentPage = page;
+        uint16_t currentOffset = offset;
+        
+        while (bytesToRead > 0) {
+            uint8_t* ptr = nullptr;
+            ESP_ERROR_CHECK(esp_himem_map(memptr, rangeptr, currentPage * ESP_HIMEM_BLKSZ, 0, ESP_HIMEM_BLKSZ, 0, (void**)&ptr));
+            
+            uint32_t availableInPage = ESP_HIMEM_BLKSZ - currentOffset;
+            uint32_t chunkSize = (bytesToRead <= availableInPage) ? bytesToRead : availableInPage;
+            
+            memcpy(buf + bufferOffset, ptr + currentOffset, chunkSize);
             ESP_ERROR_CHECK(esp_himem_unmap(rangeptr, ptr, ESP_HIMEM_BLKSZ));
-        }
-        else {
-            uint16_t firstChunk = ESP_HIMEM_BLKSZ - offset;
-            memcpy(buf, ptr + offset, firstChunk - 1);
-            ESP_ERROR_CHECK(esp_himem_unmap(rangeptr, ptr, ESP_HIMEM_BLKSZ));
-            page++; uint16_t remaining = fileSize - firstChunk;
-            if (remaining > ESP_HIMEM_BLKSZ) {
-                while (remaining > ESP_HIMEM_BLKSZ) {
-                    ESP_ERROR_CHECK(esp_himem_map(memptr, rangeptr, page*ESP_HIMEM_BLKSZ, 0, ESP_HIMEM_BLKSZ, 0, (void**)&ptr));
-                    memcpy(buf + firstChunk,  ptr, ESP_HIMEM_BLKSZ);
-                    ESP_ERROR_CHECK(esp_himem_unmap(rangeptr, ptr, ESP_HIMEM_BLKSZ));
-                    remaining -= ESP_HIMEM_BLKSZ;
-                    firstChunk = firstChunk + ESP_HIMEM_BLKSZ;
-                    page++;
-                }
-                ESP_ERROR_CHECK(esp_himem_map(memptr, rangeptr, page*ESP_HIMEM_BLKSZ, 0, ESP_HIMEM_BLKSZ, 0, (void**)&ptr));
-                memcpy(buf + firstChunk, ptr, remaining);
-                ESP_ERROR_CHECK(esp_himem_unmap(rangeptr, ptr, ESP_HIMEM_BLKSZ));
+            
+            bytesToRead -= chunkSize;
+            bufferOffset += chunkSize;
+            
+            // Move to next page if more data to read
+            if (bytesToRead > 0) {
+                currentPage++;
+                currentOffset = 0;  // Start from beginning of next page
             }
-            ESP_ERROR_CHECK(esp_himem_map(memptr, rangeptr, page*ESP_HIMEM_BLKSZ, 0, ESP_HIMEM_BLKSZ, 0, (void**)&ptr));
-            memcpy(buf + firstChunk, ptr, remaining);
-            ESP_ERROR_CHECK(esp_himem_unmap(rangeptr, ptr, ESP_HIMEM_BLKSZ));
         }
         return fileSize;
     }
