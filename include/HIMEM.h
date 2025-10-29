@@ -10,7 +10,8 @@ struct struct_FileInfo;
 
 namespace HIMEMLIB {
     /**
-     * Motion detection from JPEG image
+     * High Memory (HIMEM) File System
+     * Provides file storage and retrieval functionality using ESP32 HIMEM
      */
     class HIMEM {
     public:
@@ -23,17 +24,23 @@ namespace HIMEMLIB {
          * Destructor - clean up allocated memory
          */
         ~HIMEM();
-        // Intialize HIMEM
+        // System Management
         void init();
+        boolean memoryTest();
+        void freeMemory();
+        
+        // File Operations
         int writeFile(String fileName, uint8_t* buf, uint32_t bytes);
         uint32_t readFile(int id, String &fileName, uint8_t* buf);
         boolean deleteFile(int id);
-        unsigned long freespace();
-        void freeMemory();
+        
+        // File Information
         uint16_t getID(String filename);
         uint32_t getFilesize(int id);
         String getFileName(int id);
-        boolean memoryTest();
+        
+        // Memory Management
+        unsigned long freespace();
         void compact();
         
         // Configuration settings

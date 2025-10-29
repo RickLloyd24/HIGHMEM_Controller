@@ -1,8 +1,10 @@
 #include "HIMEM.h"
 
-#define maxBuffers 100
+// Configuration Constants
+#define MAX_BUFFERS 100
 #define MAX_FILENAME_LEN 40
 
+// File Information Structure
 struct struct_FileInfo {
     uint16_t ID;
     char filename[MAX_FILENAME_LEN];
@@ -11,39 +13,43 @@ struct struct_FileInfo {
     uint16_t offset;
 };
 
-#define maxfiles ESP_HIMEM_BLKSZ / sizeof(struct_FileInfo) - 1
+// Calculate maximum files that can fit in one block
+#define MAX_FILES (ESP_HIMEM_BLKSZ / sizeof(struct_FileInfo) - 1)
 
-struct_FileInfo * records = nullptr;
+// Global Variables (shared across all HIMEM instances)
+struct_FileInfo* records = nullptr;        // Pointer to file records array
 
-/* Global Variables */
-esp_himem_handle_t memptr = nullptr;
-esp_himem_rangehandle_t rangeptr = nullptr;
-unsigned long himemSize = 0;
-unsigned int lastPage = 0;
-uint16_t fileIndex = 0;
-uint16_t cPage = 0;
-uint16_t cOffset = 0;
+// HIMEM Hardware Handles
+esp_himem_handle_t memptr = nullptr;        // Handle to allocated HIMEM
+esp_himem_rangehandle_t rangeptr = nullptr; // Handle to memory mapping range
+
+// Memory Layout Tracking
+unsigned long himemSize = 0;               // Total HIMEM size available
+unsigned int lastPage = 0;                 // Last page number (reserved for records)
+uint16_t fileIndex = 0;                    // Current number of stored files
+uint16_t cPage = 0;                        // Current page for new writes
+uint16_t cOffset = 0;                      // Current offset within page
 
 namespace HIMEMLIB {
 
     /**
-     * Constructor
+     * Constructor - Initialize HIMEM file system
      */
     HIMEM::HIMEM() {
-        esp_log_level_set("motion", ESP_LOG_DEBUG);
-
+        esp_log_level_set("HIMEM", ESP_LOG_DEBUG);
     }
     
     /**
-     * Destructor - clean up allocated memory
+     * Destructor - Clean up allocated memory resources
      */
     HIMEM::~HIMEM() {
-        //if (pixelCntArray != nullptr) {
-        //    free(pixelCntArray);
-        //    pixelCntArray = nullptr;
-        //}
+        // TODO: Implement proper cleanup of HIMEM resources
+        // esp_himem_free(memptr);
+        // esp_himem_free_map_range(rangeptr);
     }
-    
+    /* ----------------------------------------------------------- 
+    * HIMEM Initialization
+    ----------------------------------------------------------------*/    
     void HIMEM::init() {
         if (esp_himem_get_phys_size() == 0) {
             ESP_LOGE("init", "HIMEM not initialized make sure -D BOARD_HAS_PSRAM is set");
@@ -76,8 +82,8 @@ namespace HIMEMLIB {
                 fileName.c_str(), MAX_FILENAME_LEN - 1);
             return -1;
         }
-        if (fileIndex + 1 >= maxfiles) {
-            ESP_LOGE("writeFile", "Maximum number of files reached %d", maxfiles);
+        if (fileIndex + 1 >= MAX_FILES) {
+            ESP_LOGE("writeFile", "Maximum number of files reached %d", MAX_FILES);
             return -1;
         }
         if (himemSize - cPage * ESP_HIMEM_BLKSZ - cOffset < bytes) {
@@ -94,31 +100,27 @@ namespace HIMEMLIB {
         ESP_ERROR_CHECK(esp_himem_unmap(rangeptr, records, ESP_HIMEM_BLKSZ));
         fileIndex++;
     /* Write File to HIMEM */
-        uint8_t * ptr = nullptr;
-        ESP_ERROR_CHECK(esp_himem_map(memptr, rangeptr, cPage * ESP_HIMEM_BLKSZ, 0, ESP_HIMEM_BLKSZ, 0, (void**)&ptr));
-        uint32_t firstChunk = ESP_HIMEM_BLKSZ - cOffset;
-        if (bytes <= firstChunk) {
-            memcpy(ptr + cOffset, buf, bytes);
-            cOffset += bytes;
+        uint32_t bytesToWrite = bytes;
+        uint32_t bufferOffset = 0;
+        
+        while (bytesToWrite > 0) {
+            uint8_t* ptr = nullptr;
+            ESP_ERROR_CHECK(esp_himem_map(memptr, rangeptr, cPage * ESP_HIMEM_BLKSZ, 0, ESP_HIMEM_BLKSZ, 0, (void**)&ptr));
+            
+            uint32_t availableInPage = ESP_HIMEM_BLKSZ - cOffset;
+            uint32_t chunkSize = (bytesToWrite <= availableInPage) ? bytesToWrite : availableInPage;
+            
+            memcpy(ptr + cOffset, buf + bufferOffset, chunkSize);
             ESP_ERROR_CHECK(esp_himem_unmap(rangeptr, ptr, ESP_HIMEM_BLKSZ));
-        }
-        else {
-            memcpy(ptr + cOffset, buf, firstChunk - 1);
-            ESP_ERROR_CHECK(esp_himem_unmap(rangeptr, ptr, ESP_HIMEM_BLKSZ));
-            uint32_t remaining = bytes - firstChunk; cPage++;
-            if (remaining > ESP_HIMEM_BLKSZ) {
-                while (remaining > ESP_HIMEM_BLKSZ) {
-                    ESP_ERROR_CHECK(esp_himem_map(memptr, rangeptr, cPage*ESP_HIMEM_BLKSZ, 0, ESP_HIMEM_BLKSZ, 0, (void**)&ptr));
-                    memcpy(ptr, buf + firstChunk, ESP_HIMEM_BLKSZ);
-                    ESP_ERROR_CHECK(esp_himem_unmap(rangeptr, ptr, ESP_HIMEM_BLKSZ));
-                    remaining -= ESP_HIMEM_BLKSZ;
-                    firstChunk = firstChunk + ESP_HIMEM_BLKSZ;
-                    cPage++;
-                }
-                ESP_ERROR_CHECK(esp_himem_map(memptr, rangeptr, cPage*ESP_HIMEM_BLKSZ, 0, ESP_HIMEM_BLKSZ, 0, (void**)&ptr));
-                memcpy(ptr, buf + firstChunk, remaining);
-                ESP_ERROR_CHECK(esp_himem_unmap(rangeptr, ptr, ESP_HIMEM_BLKSZ));
-                cOffset = remaining;
+            
+            bytesToWrite -= chunkSize;
+            bufferOffset += chunkSize;
+            cOffset += chunkSize;
+            
+            // Move to next page if current page is full
+            if (cOffset >= ESP_HIMEM_BLKSZ) {
+                cPage++;
+                cOffset = 0;
             }
         }
         return (fileIndex - 1);
