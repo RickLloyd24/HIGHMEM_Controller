@@ -10,7 +10,7 @@ void setup() {
   Serial.begin(115200);
   delay(3000);
   ESP_LOGI("setup", "Start");
-  
+
 /* generate test data */
   for (int i = 0; i < fileBufSize; i++) {
     fileBuf[i] = i % 256;
@@ -43,9 +43,6 @@ void setup() {
   if (match) {
     ESP_LOGI("setup", "Data verification successful for all files");
   }
-  uint32_t filesize = himem.filesize(5);
-  ESP_LOGI("setup", "Filesize for file ID 5 is %d bytes", filesize);
-  ESP_LOGI("setup", "Filename for file ID 5 is %s", himem.fileName(5).c_str());
 
 }
 

@@ -40,6 +40,7 @@ namespace HIMEMLIB {
         ~HIMEM();
         // System Management
         void init();
+        void cleanup();
         boolean memoryTest();
         void freeMemory();
         
@@ -56,6 +57,7 @@ namespace HIMEMLIB {
         // Memory Management
         unsigned long freespace();
         void compact();
+        void printMemoryStatus();
         
         // Configuration settings
     protected:
@@ -66,8 +68,14 @@ namespace HIMEMLIB {
         uint16_t fileIndex = 0;
         uint16_t cPage;
         uint16_t cOffset;
+        
+        // Resource tracking for leak prevention
+        bool isInitialized = false;
+        bool memoryAllocated = false;
+        bool rangeAllocated = false;
       
         struct_FileInfo getRecord(int id);
+        void cleanupResources();
 
     };   
 }

@@ -2,73 +2,90 @@
 
 HIMEMLIB::HIMEM himem;
 
-#define fileBufSize 200000
-uint16_t fileId = 0;
+#define stop {delay(1000); while(1);}
+#define NUMFILES 100
+#define fileBufSize 20000
+uint8_t fileBuf[fileBufSize];
+uint16_t fileIdarray[NUMFILES] = {0};
+unsigned long taskTime = 0;
+String fileName = "";
 
 void setup() {
   Serial.begin(115200);
   delay(3000);
   ESP_LOGI("setup", "Start");
-  ESP_LOGE("setup", "Example Error");
-  ESP_LOGW("setup", "Example Warning");
 
-  // Check if PSRAM is available and initialized
-  if (!psramInit()) {
-    ESP_LOGE("setup", "PSRAM not available or failed to initialize!");
-    return;
+/* generate test data */
+  for (int i = 0; i < fileBufSize; i++) {
+    fileBuf[i] = i % 256;
   }
-  ESP_LOGI("setup", "PSRAM initialized successfully.");
-
-  // Print initial PSRAM and heap free memory
-  ESP_LOGI("setup", "Free PSRAM before allocation: %d", ESP.getFreePsram());
-
-  // Allocate a large buffer using malloc.
-  // With PSRAM enabled, large allocations automatically go to PSRAM.
-  size_t bufferSize = 200000; // 200 KB
-  uint8_t* psramBuffer = (uint8_t*)malloc(bufferSize);
-
-  if (psramBuffer == NULL) {
-    ESP_LOGE("setup", "Failed to allocate memory using malloc!");
-  } else {
-    ESP_LOGI("setup", "Successfully allocated %d bytes using malloc.", bufferSize);
-  }  
-
-// Fill the buffer with some data to demonstrate usage
-  for (size_t i = 0; i < bufferSize; i++) {
-    psramBuffer[i] = (uint8_t)(i % 256);
-  }
-  ESP_LOGI("setup", "Buffer filled with data.");
-
 /* initialize HIMEM */
   himem.init();
 
 /* write multiple files */
-  for (int i = 0; i < 5; i++) {
-    String fileName = "file_" + String(i) + ".bin";
-    int id = himem.writeFile(fileName, psramBuffer, fileBufSize);
+  for (int i = 0; i < NUMFILES; i++) {
+    fileName = "file_" + String(i) + ".bin";
+    fileIdarray[i] = himem.writeFile(fileName, fileBuf, fileBufSize);
   }
-  ESP_LOGI("setup", "Wrote 5 files of %d bytes each", fileBufSize);
-  ESP_LOGI("setup", "Available memory is %lu bytes.", himem.freespace());
+  ESP_LOGI("setup", "Wrote %d files of %d bytes each", NUMFILES, fileBufSize);
 
-/* read back and verify */
-  bool match = true;
-  for (int i = 0; i < 5; i++) {
-    String fileName;
-    int bytesRead = himem.readFile(i, fileName, psramBuffer);
-    for (int j = 0; j < bytesRead; j++) {
-      if (psramBuffer[j] != (j % 256)) {
-        match = false;
-        ESP_LOGE("setup", "Data mismatch at byte %d: expected %d, got %d", j, j % 256, psramBuffer[j]);
-        break;
-      }
+  himem.deleteFile(50);  // Delete one file to test read before delete in loop
+  ESP_LOGI("setup", "Deleted file ID 50");
+
+  ESP_LOGI("setup", "Starting to compact memory after deleting");
+  himem.compact();
+
+
+  ESP_LOGI("setup", "Compaction completed after deletions. Available memory is %lu bytes.", himem.freespace());
+  uint32_t bytesRead = himem.readFile(50, fileName, fileBuf);  // Read deleted file to confirm deletion
+  if (bytesRead != 0) {
+    ESP_LOGE("setup", "Error: Deleted file ID 50 still readable with %d bytes!", bytesRead);
+    stop;
+  }
+  ESP_LOGI("setup", "Confirmed deletion of file ID 50"); 
+  delay(5000); // Wait before reading another file
+  int match = true;
+  bytesRead = himem.readFile(51, fileName, fileBuf);
+  Serial.printf("Read file ID 51, filename %s, %d bytes\n", fileName.c_str(), bytesRead);
+  for (int j = 0; j < bytesRead; j++) {
+    if (fileBuf[j] != (j % 256)) {
+      match = false;
+      ESP_LOGE("setup", "Data mismatch at byte %d: expected %d, got %d", j, j % 256, fileBuf[j]);
+      break;
     }
   }
-  if (match) {
-    ESP_LOGI("setup", "Data verification successful for all files");
-  }
 
+
+  taskTime = millis() + 1000;
 }
 
 void loop() {
-  // put your main code here, to run repeatedly:
+  unsigned long currentTime = millis();
+  uint16_t fileNameCount = NUMFILES;
+  himem.compact();
+
+  if (currentTime > taskTime) {
+    taskTime = currentTime + 1000;
+    uint16_t ID = random(0, NUMFILES);
+    fileName = "file_" + String(ID) + ".bin";
+/* Read and verify file before deletion */    
+    uint32_t bytesRead = himem.readFile(ID, fileName, fileBuf);                  // Read the file before deleting
+    if (bytesRead == 0) stop;
+    for (uint32_t j = 0; j < bytesRead; j++) {                                   //Check data integrity
+      if (fileBuf[j] != (j % 256)) {
+        ESP_LOGE("loop", "Data mismatch at byte %d: expected %d, got %d", j, j % 256, fileBuf[j]);
+        stop;
+      }
+    }
+/* Delete the file */
+    if (!himem.deleteFile(fileIdarray[ID])) stop;
+/* Write a new file random size to replace it */
+    fileNameCount++;
+    fileName = "file_" + String(fileNameCount) + ".bin";
+    int filesize = random(10000, 20000);
+    int ret = himem.writeFile(fileName, fileBuf, filesize);
+    if (ret < 0) {stop}
+    fileIdarray[ID] = ret;
+    Serial.printf("Deleted file ID %d, wrote new file %s with ID %d and size %d bytes\n", ID, fileName.c_str(), ret, filesize);
+  }
 }
