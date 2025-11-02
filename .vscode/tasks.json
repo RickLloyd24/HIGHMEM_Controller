@@ -192,6 +192,11 @@
 			"label": "Build freenove_esp32_wrover",
 			"type": "shell",
 			"command": "C:\\Users\\rickl\\.platformio\\penv\\Scripts\\platformio.exe run --environment freenove_esp32_wrover"
+		},
+		{
+			"label": "Build freenove_esp32_wrover",
+			"type": "shell",
+			"command": "C:\\Users\\rickl\\.platformio\\penv\\Scripts\\platformio.exe run --environment freenove_esp32_wrover"
 		}
 	]
 }
