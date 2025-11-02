@@ -6,7 +6,20 @@
 #include "esp32/himem.h"
 #include <esp_log.h>             // Required for ESP-IDF logging macros
 
-struct struct_FileInfo;
+#define MAX_HIMEM_FILENAME_LEN 40
+#define HIMEM_FILE_HEADER_SIZE sizeof(struct_HIMEM_FileInfo)
+#define MAX_HIMEM_FILES (ESP_HIMEM_BLKSZ / sizeof(struct_HIMEM_FileInfo) - 1)
+
+// File Information Structure
+struct struct_HIMEM_FileInfo {
+    uint16_t ID;
+    char filename[MAX_HIMEM_FILENAME_LEN + 1];
+    uint32_t fileSize;
+    uint16_t page;
+    uint16_t offset;
+};
+
+struct struct_HIMEM_FileInfo;
 
 namespace HIMEMLIB {
     // Error codes for HIMEM operations
@@ -14,7 +27,7 @@ namespace HIMEMLIB {
         SUCCESS = 0,
         FILE_TOO_LARGE = -1,
         FILENAME_TOO_LONG = -2,
-        MAX_FILES_REACHED = -3,
+        MAX_HIMEM_FILES_REACHED = -3,
         INSUFFICIENT_MEMORY = -4,
         INVALID_ID = -5,
         INITIALIZATION_FAILED = -6
@@ -39,27 +52,24 @@ namespace HIMEMLIB {
          */
         ~HIMEM();
         // System Management
-        void init();
-        void cleanup();
-        boolean memoryTest();
-        void freeMemory();
-        
+        void create();                                                     // Initialize HIMEM file system
+        void destroy();                                                    // Deinitialize HIMEM file system
+        void freeMemory();                                                 // Free all HIMEM resources
+        unsigned long freespace();                                         // Get available HIMEM space
+
         // File Operations
-        int writeFile(String fileName, uint8_t* buf, uint32_t bytes);
-        uint32_t readFile(int id, String &fileName, uint8_t* buf);
-        boolean deleteFile(int id);
+        int writeFile(String fileName, uint8_t* buf, uint32_t bytes);      // Write file, return file ID or negative error code
+        uint32_t readFile(int id, String &fileName, uint8_t* buf);         // Return number of bytes read, 0 on error
         
         // File Information
-        uint16_t getID(String filename);
-        uint32_t getFilesize(int id);
-        String getFileName(int id);
+        int getID(String filename);                                        // Get file ID by name, -1 if not found   
+        uint32_t getFilesize(int id);                                      // Get file size by ID, 0 if not found    
+        String getFileName(int id);                                        // Get file name by ID, empty string if not found
         
         // Memory Management
-        unsigned long freespace();
-        void compact();
-        void printMemoryStatus();
+        void printMemoryStatus();                                          // Print current HIMEM usage status   
+        boolean memoryTest();                                              // Test HIMEM functionality
         
-        // Configuration settings
     protected:
         esp_himem_handle_t memptr = nullptr;
         esp_himem_rangehandle_t rangeptr = nullptr;
@@ -74,7 +84,7 @@ namespace HIMEMLIB {
         bool memoryAllocated = false;
         bool rangeAllocated = false;
       
-        struct_FileInfo getRecord(int id);
+        struct_HIMEM_FileInfo getRecord(int id);
         void cleanupResources();
 
     };   

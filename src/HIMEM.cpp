@@ -1,26 +1,10 @@
 #include "HIMEM.h"
 
 // Configuration Constants
-#define MAX_BUFFERS 100
-#define MAX_FILENAME_LEN 40
-#define BYTES_PER_KILOBYTE 1024
-#define FILENAME_NULL_TERMINATOR 0
 
-// File Information Structure
-struct struct_FileInfo {
-    uint16_t ID;
-    char filename[MAX_FILENAME_LEN];
-    uint32_t fileSize;
-    uint16_t page;
-    uint16_t offset;
-};
-
-// Calculate maximum files that can fit in one block
-#define MAX_FILES (ESP_HIMEM_BLKSZ / sizeof(struct_FileInfo) - 1)
-#define FREE_SLOT 0xFFFF
 
 // Global Variables (shared across all HIMEM instances)
-struct_FileInfo* records = nullptr;        // Pointer to file records array
+struct_HIMEM_FileInfo* records = nullptr;        // Pointer to file records array
 
 // HIMEM Hardware Handles
 esp_himem_handle_t memptr = nullptr;        // Handle to allocated HIMEM
@@ -32,7 +16,6 @@ unsigned int lastPage = 0;                 // Last page number (reserved for rec
 uint16_t fileIndex = 0;                    // Current number of stored files
 uint16_t cPage = 0;                        // Current page for new writes
 uint16_t cOffset = 0;                      // Current offset within page
-boolean filesystemMode = false;            // HIMEM initialization state
 
 namespace HIMEMLIB {
 
@@ -44,7 +27,7 @@ namespace HIMEMLIB {
             case HimemError::SUCCESS: return "Success";
             case HimemError::FILE_TOO_LARGE: return "File too large";
             case HimemError::FILENAME_TOO_LONG: return "Filename too long";
-            case HimemError::MAX_FILES_REACHED: return "Maximum files reached";
+            case HimemError::MAX_HIMEM_FILES_REACHED: return "Maximum files reached";
             case HimemError::INSUFFICIENT_MEMORY: return "Insufficient memory";
             case HimemError::INVALID_ID: return "Invalid file ID";
             case HimemError::INITIALIZATION_FAILED: return "Initialization failed";
@@ -77,7 +60,7 @@ namespace HIMEMLIB {
     /* ----------------------------------------------------------- 
     * HIMEM Initialization
     ----------------------------------------------------------------*/    
-    void HIMEM::init() {
+    void HIMEM::create() {
         // Cleanup any existing resources first
         if (isInitialized) {
             ESP_LOGW("HIMEM", "Already initialized, cleaning up previous resources");
@@ -85,25 +68,25 @@ namespace HIMEMLIB {
         }
         
         if (esp_himem_get_phys_size() == 0) {
-            ESP_LOGE("init", "HIMEM not initialized make sure -D BOARD_HAS_PSRAM is set");
+            ESP_LOGE("create", "HIMEM not initialized make sure -D BOARD_HAS_PSRAM is set");
             return;
         }
         himemSize = esp_himem_get_free_size() - ESP_HIMEM_BLKSZ;  //Reserve one block for file records
         if (himemSize <= ESP_HIMEM_BLKSZ) {
-            ESP_LOGE("init", "Not enough HIMEM available, only %lu bytes", himemSize);
+            ESP_LOGE("create", "Not enough HIMEM available, only %lu bytes", himemSize);
             return;
         }   
         
         esp_err_t ret = esp_himem_alloc(himemSize, &memptr);
         if (ret != ESP_OK) {
-            ESP_LOGE("init", "Failed to allocate HIMEM: %s", esp_err_to_name(ret));
+            ESP_LOGE("create", "Failed to allocate HIMEM: %s", esp_err_to_name(ret));
             return;
         }
         memoryAllocated = true;
         
         ret = esp_himem_alloc_map_range(ESP_HIMEM_BLKSZ, &rangeptr);
         if (ret != ESP_OK) {
-            ESP_LOGE("init", "Failed to allocate map range: %s", esp_err_to_name(ret));
+            ESP_LOGE("create", "Failed to allocate map range: %s", esp_err_to_name(ret));
             cleanupResources();
             return;
         }
@@ -112,16 +95,14 @@ namespace HIMEMLIB {
         lastPage = himemSize / ESP_HIMEM_BLKSZ - 1;
         isInitialized = true;
 
-        ESP_LOGI("init", "HIMEM total size: %lu bytes", himemSize);
-        //ESP_LOGI("init", "HIMEM available pages: %u, each page is %d bytes", lastPage - 1, ESP_HIMEM_BLKSZ);
-        //ESP_LOGI("init", "HIMEM reserved size: %u bytes", esp_himem_reserved_area_size());
-        ESP_LOGI("init", "Maximun Number of Files/buffers: %d", MAX_FILES);
+        ESP_LOGI("create", "HIMEM free space: %lu bytes", freespace());
+        ESP_LOGI("create", "Maximun Number of Files/buffers: %d", MAX_HIMEM_FILES);
     }
 
     /**
      * Clean up all allocated HIMEM resources
      */
-    void HIMEM::cleanup() {
+    void HIMEM::destroy() {
         ESP_LOGI("HIMEM", "Manual cleanup requested");
         cleanupResources();
     }
@@ -166,9 +147,9 @@ namespace HIMEMLIB {
         ESP_LOGI("cleanup", "All resources cleaned up successfully");
     }
     /* ----------------------------------------------------------- 
-    * Write File from HIMEM
+    * Write File to HIMEM
     * @param fileName - file name output to String
-    * @param buf - buffer to read file data into
+    * @param buf - buffer with data to write 
     * @param bytes - number of bytes to write
     * @return file Id number, negative on error
     ----------------------------------------------------------------*/
@@ -188,34 +169,21 @@ namespace HIMEMLIB {
         }
         
     /* Check for Errors */
-        if (fileName.length() >= MAX_FILENAME_LEN) {
+        if (fileName.length() >= MAX_HIMEM_FILENAME_LEN) {
             ESP_LOGE("writeFile", "File %s name too long, max is %d characters", 
-                fileName.c_str(), MAX_FILENAME_LEN - 1);
+                fileName.c_str(), MAX_HIMEM_FILENAME_LEN - 1);
             return static_cast<int>(HimemError::FILENAME_TOO_LONG);
         }
-        if (himemSize - cPage * ESP_HIMEM_BLKSZ - cOffset < bytes) {
+        if (freespace() < bytes) {
             ESP_LOGE("writeFile", "File is larger than available HIMEM");
             return static_cast<int>(HimemError::INSUFFICIENT_MEMORY);
         }
     /* Save File Information */
         int slot = fileIndex;
-        ESP_ERROR_CHECK(esp_himem_map(memptr, rangeptr, lastPage * ESP_HIMEM_BLKSZ, 0, ESP_HIMEM_BLKSZ, 0, (void**)&records));
-        if (fileIndex + 1 >= MAX_FILES) {
-            slot = -1;
-            for (int i = 0; i < MAX_FILES; i++) {
-                if (records[i].ID == FREE_SLOT) { 
-                    slot = i; break;
-                }
-            }
-        }    
-        if (slot == -1) {    
-            ESP_LOGE("writeFile", "Maximum number of files reached %d", MAX_FILES);
-            ESP_ERROR_CHECK(esp_himem_unmap(rangeptr, records, ESP_HIMEM_BLKSZ));
-            return static_cast<int>(HimemError::MAX_FILES_REACHED);
-        }
+        ESP_ERROR_CHECK(esp_himem_map(memptr, rangeptr, lastPage * ESP_HIMEM_BLKSZ, 0, ESP_HIMEM_BLKSZ, 0, (void**)&records));      
         records[slot].ID = slot;
         records[slot].fileSize = bytes;
-        strncpy(records[slot].filename, fileName.c_str(), MAX_FILENAME_LEN);
+        fileName.toCharArray(records[slot].filename, fileName.length() + 1);
         records[slot].page = cPage;
         records[slot].offset = cOffset;
         ESP_ERROR_CHECK(esp_himem_unmap(rangeptr, records, ESP_HIMEM_BLKSZ));
@@ -246,9 +214,10 @@ namespace HIMEMLIB {
         }
         return (slot);
     }
+
     /* ----------------------------------------------------------- 
     * Read File from HIMEM
-    * @param id - id assigned when file was created
+    * @param id - id assigned when file was create()d
     * @param fileName - file name output to String
     * @param buf - buffer to read file data into
     * @return number of bytes read, 0 on error
@@ -269,24 +238,24 @@ namespace HIMEMLIB {
             ESP_LOGE("readFile", "Invalid file ID %d", id);
             return 0;
         }
-    /* Retrieve File Information */
+    /* Locate File Record */
+        int slot = id;
         ESP_ERROR_CHECK(esp_himem_map(memptr, rangeptr, lastPage * ESP_HIMEM_BLKSZ, 0, ESP_HIMEM_BLKSZ, 0, (void**)&records));
-        fileName = String(records[id].filename);
-        uint32_t fileSize = records[id].fileSize;
-        uint16_t page = records[id].page;
-        uint16_t offset = records[id].offset;
-        ESP_ERROR_CHECK(esp_himem_unmap(rangeptr, records, ESP_HIMEM_BLKSZ));
-        if ( records[id].ID != id ) {
-            ESP_LOGE("readFile", "File ID mismatch for ID %d", id);
+        if ( records[slot].ID != id ) {
+            ESP_LOGE("readFile", "File ID mismatch expected ID %d, got ID %d", id, records[slot].ID);
+            ESP_ERROR_CHECK(esp_himem_unmap(rangeptr, records, ESP_HIMEM_BLKSZ));
             return 0;
         }
+    /* Retrieve File Information */
+        fileName = String(records[slot].filename);
+        uint32_t fileSize = records[slot].fileSize;
+        uint16_t currentPage = records[slot].page;
+        uint16_t currentOffset = records[slot].offset;
+        ESP_ERROR_CHECK(esp_himem_unmap(rangeptr, records, ESP_HIMEM_BLKSZ));
 
-    /* Read File from HIMEM */
-        uint32_t bytesToRead = fileSize;
         uint32_t bufferOffset = 0;
-        uint16_t currentPage = page;
-        uint16_t currentOffset = offset;
-        
+        uint32_t bytesToRead = fileSize;
+    /* Read File from HIMEM */
         while (bytesToRead > 0) {
             uint8_t* ptr = nullptr;
             ESP_ERROR_CHECK(esp_himem_map(memptr, rangeptr, currentPage * ESP_HIMEM_BLKSZ, 0, ESP_HIMEM_BLKSZ, 0, (void**)&ptr));
@@ -314,7 +283,7 @@ namespace HIMEMLIB {
             ESP_LOGW("freespace", "HIMEM not initialized");
             return 0;
         }
-        unsigned long avail = himemSize - (unsigned long)cPage * ESP_HIMEM_BLKSZ - cOffset;
+        unsigned long avail = himemSize - ((unsigned long)cPage * ESP_HIMEM_BLKSZ) - ESP_HIMEM_BLKSZ - cOffset;
         return avail;
     }
 
@@ -326,13 +295,12 @@ namespace HIMEMLIB {
             ESP_LOGW("freeMemory", "HIMEM not initialized");
             return;
         }
-        
-        ESP_LOGI("freeMemory", "Resetting file system, freeing %d files", fileIndex);
+
+        ESP_LOGI("freeMemory", "File system reset complete, freed %d files", fileIndex);   
         fileIndex = 0;
         cPage = 0;
         cOffset = 0;
         records = nullptr;
-        ESP_LOGI("freeMemory", "File system reset complete");
     }
 
     uint32_t HIMEM::getFilesize(int id) {
@@ -340,7 +308,7 @@ namespace HIMEMLIB {
             ESP_LOGW("getFilesize", "HIMEM not initialized");
             return 0;
         }
-        struct_FileInfo info = getRecord(id);
+        struct_HIMEM_FileInfo info = getRecord(id);
         return info.fileSize;
     }
     
@@ -349,106 +317,38 @@ namespace HIMEMLIB {
             ESP_LOGW("getFileName", "HIMEM not initialized");
             return String("");
         }
-        struct_FileInfo info = getRecord(id);
+        struct_HIMEM_FileInfo info = getRecord(id);
         return String(info.filename);
     }
-    uint16_t HIMEM::getID(String filename) {
-        // Not yet implemented
-        return 0;
-    }
 
-    boolean HIMEM::deleteFile(int id) {
-        filesystemMode = true; // Enable filesystem mode
-        int slot = id;
+    int HIMEM::getID(String filename) {
+        if (!isInitialized) {
+            ESP_LOGW("getID", "HIMEM not initialized");
+            return 0;
+        }
+        int flag = -1;
         ESP_ERROR_CHECK(esp_himem_map(memptr, rangeptr, lastPage * ESP_HIMEM_BLKSZ, 0, ESP_HIMEM_BLKSZ, 0, (void**)&records));
-        if (id >= MAX_FILES) {
-            slot = -1;
-            for (int i = 0; i < MAX_FILES; i++) {
-                if (records[i].ID == FREE_SLOT) { 
-                    slot = i; break;
+        for (int i = 0; i < fileIndex; i++) {
+            for (int j = 0; j <= filename.length(); j++) {
+                // Compare characters one by one
+                if (records[i].filename[j] != filename.charAt(j)) {
+                    break; // Mismatch found, break inner loop
+                }
+                // If we reach the null terminator in both strings, they match
+                if (records[i].filename[j] == '\0' && j == filename.length()) {
+                    flag = i;
+                    break;
                 }
             }
-        }    
-        if (slot == -1) {    
-            ESP_LOGE("deleteFile", "ID not found");
-            ESP_ERROR_CHECK(esp_himem_unmap(rangeptr, records, ESP_HIMEM_BLKSZ));
-            return false;
-        }
-        records[slot].ID = FREE_SLOT;
-        records[slot].fileSize = 0;
-        String fileName = "";
-        strncpy(records[slot].filename, fileName.c_str(), MAX_FILENAME_LEN);
-        records[slot].page = 0;
-        records[slot].offset = 0;
-        ESP_ERROR_CHECK(esp_himem_unmap(rangeptr, records, ESP_HIMEM_BLKSZ));
-        return true;
-    }
-    void HIMEM::compact(void) {
-        if (!filesystemMode) return;
-        int slot = -1;
-    /* Find a free slot */
-        ESP_ERROR_CHECK(esp_himem_map(memptr, rangeptr, lastPage * ESP_HIMEM_BLKSZ, 0, ESP_HIMEM_BLKSZ, 0, (void**)&records));
-        for (int i = 0; i < MAX_FILES; i++) {
-            if (records[i].ID == FREE_SLOT) { 
-                slot = i; break;
+            if (flag != -1) {
+                break; // Match found, break outer loop
             }
         }
-        if (slot < 0) return;               //No free slots found
-    /* Prepare for compaction */
-        int nPage = 0; uint16_t nOff = 0; int pPage = 0; uint16_t pOff = 0;
-        nPage = records[slot].page;
-        nOff = records[slot].offset;
-        pPage = records[slot + 1].page;
-        pOff = records[slot + 1].offset;
-        uint32_t bytesToWrite = records[slot].fileSize;
-        uint32_t availableInPage = ESP_HIMEM_BLKSZ - pOff;
-        uint16_t bufSize = nOff - pOff;
-        uint8_t* buffer = nullptr;
-        if (availableInPage <= bytesToWrite) {                       // Block passes page boundary
-            buffer = (uint8_t*) malloc(bufSize);                     // Allocate temporary buffer
-            if (buffer == nullptr) {
-                ESP_LOGE("compact", "Memory allocation failed during compaction");
-                ESP_ERROR_CHECK(esp_himem_unmap(rangeptr, records, ESP_HIMEM_BLKSZ));
-                return;
-            }
+        if (flag == -1) {
+            ESP_LOGW("getID", "File %s not found", filename.c_str());
         }
-    /* Update File System Table */    
-        records[slot].ID = records[slot + 1].ID;
-        records[slot].fileSize = records[slot + 1].fileSize;
-        for (int i = 0; i < MAX_FILENAME_LEN; i++) {
-            records[slot].filename[i] = records[slot + 1].filename[i];
-        }
-        records[slot].page = records[slot + 1].page;
-        records[slot].offset = records[slot + 1].offset;
-        records[slot + 1].ID = FREE_SLOT;
         ESP_ERROR_CHECK(esp_himem_unmap(rangeptr, records, ESP_HIMEM_BLKSZ));
-
-    /* Move data in the same page */
-        uint8_t* ptr = nullptr;
-        uint32_t chunkSize = ESP_HIMEM_BLKSZ - pOff;
-        ESP_ERROR_CHECK(esp_himem_map(memptr, rangeptr, nPage * ESP_HIMEM_BLKSZ, 0, ESP_HIMEM_BLKSZ, 0, (void**)&ptr));
-        memcpy(ptr + nOff, ptr + pOff, chunkSize);
-        ESP_ERROR_CHECK(esp_himem_unmap(rangeptr, ptr, ESP_HIMEM_BLKSZ));
-        bytesToWrite -= chunkSize; nPage++;
-
-    /*    Block passes page boundary */
-        while (bytesToWrite > 0) {
-            uint32_t chunkSize = (bytesToWrite <= availableInPage) ? bytesToWrite : availableInPage;
-        
-            ESP_ERROR_CHECK(esp_himem_map(memptr, rangeptr, nPage * ESP_HIMEM_BLKSZ, 0, ESP_HIMEM_BLKSZ, 0, (void**)&ptr));
-            memcpy(buffer, ptr, bufSize);                      //Save data before overwrite
-            memcpy(ptr, ptr + (nOff - pOff), chunkSize);
-            ESP_ERROR_CHECK(esp_himem_unmap(rangeptr, ptr, ESP_HIMEM_BLKSZ));
-            ESP_ERROR_CHECK(esp_himem_map(memptr, rangeptr, (nPage - 1) * ESP_HIMEM_BLKSZ, 0, ESP_HIMEM_BLKSZ, 0, (void**)&ptr));
-            memcpy(ptr + (nOff + ESP_HIMEM_BLKSZ - pOff), buffer, bufSize);
-            ESP_ERROR_CHECK(esp_himem_unmap(rangeptr, ptr, ESP_HIMEM_BLKSZ));
-
-            bytesToWrite = bytesToWrite - bufSize - chunkSize;
-            //if (bytesToWrite == 0) break;
-            nPage++;
-        }
-        free(buffer);
-        return;
+        return flag;
     }
 
     boolean HIMEM::memoryTest(){
@@ -469,7 +369,7 @@ namespace HIMEMLIB {
         
         if (isInitialized) {
             ESP_LOGI("MemStatus", "Total HIMEM Size: %lu bytes", himemSize);
-            ESP_LOGI("MemStatus", "Current Files: %d / %d", fileIndex, MAX_FILES);
+            ESP_LOGI("MemStatus", "Current Files: %d / %d", fileIndex, MAX_HIMEM_FILES);
             ESP_LOGI("MemStatus", "Current Page: %d / %d", cPage, lastPage);
             ESP_LOGI("MemStatus", "Current Offset: %d bytes", cOffset);
             ESP_LOGI("MemStatus", "Free Space: %lu bytes", freespace());
@@ -485,20 +385,21 @@ namespace HIMEMLIB {
     }
     
 
-    struct_FileInfo HIMEM::getRecord(int id){
-        struct_FileInfo info = {}; // Initialize to zero
+    struct_HIMEM_FileInfo HIMEM::getRecord(int id){
+        struct_HIMEM_FileInfo info = {}; // Initialize to zero
         
         if (!isInitialized) {
             ESP_LOGW("getRecord", "HIMEM not initialized");
             return info;
         }
         
-        Serial.printf("fileIndex: %d, requested id: %d\n", fileIndex, id);  
+        //Serial.printf("fileIndex: %d, requested id: %d\n", fileIndex, id);  
         if (id >= 0 && id < fileIndex) {
             ESP_ERROR_CHECK(esp_himem_map(memptr, rangeptr, lastPage * ESP_HIMEM_BLKSZ, 0, ESP_HIMEM_BLKSZ, 0, (void**)&records));
             info = records[id];
-            Serial.printf("Info File size: %d, record file size: %d\n", info.fileSize, records[id].fileSize);
-            Serial.printf("Info File name: %s, record file name: %s\n", info.filename, records[id].filename);
+            //Serial.printf("ID: %d, Name: %s, Size: %u bytes, Page: %d, Offset: %d\n", 
+            //    records[id].ID, records[id].filename, records[id].fileSize, records[id].page, records[id].offset);
+
             ESP_ERROR_CHECK(esp_himem_unmap(rangeptr, records, ESP_HIMEM_BLKSZ));
         }
         return info;

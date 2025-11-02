@@ -2,6 +2,7 @@
 
 HIMEMLIB::HIMEM himem;
 
+#define stop {delay(1000); while(1);}
 #define fileBufSize 20000
 uint8_t fileBuf[fileBufSize];
 uint16_t fileId = 0;
@@ -9,14 +10,14 @@ uint16_t fileId = 0;
 void setup() {
   Serial.begin(115200);
   delay(3000);
-  ESP_LOGI("setup", "Start");
+  Serial.printf("Start\n");
 
 /* generate test data */
   for (int i = 0; i < fileBufSize; i++) {
     fileBuf[i] = i % 256;
   }
 /* initialize HIMEM */
-  himem.init();
+  himem.create();
 
 /* write multiple files */
   for (int i = 0; i < 20; i++) {
@@ -24,10 +25,11 @@ void setup() {
     int id = himem.writeFile(fileName, fileBuf, fileBufSize);
     //ESP_LOGI("setup", "Wrote file %s with ID %d", fileName.c_str(), id);
   }
-  ESP_LOGI("setup", "Wrote 20 files of %d bytes each", fileBufSize);
-  ESP_LOGI("setup", "Available memory is %lu bytes.", himem.freespace());
+  Serial.printf("Wrote 20 files of %d bytes each\n", fileBufSize);
+  Serial.printf("Available memory is %lu bytes.\n", himem.freespace());
+  himem.printMemoryStatus();
 
-/* read back and verify */
+/* read back "First In First Out" order and verify */
   bool match = true;
   for (int i = 0; i < 20; i++) {
     String fileName;
@@ -43,6 +45,8 @@ void setup() {
   if (match) {
     ESP_LOGI("setup", "Data verification successful for all files");
   }
+  /* Free all HIMEM resources to start writing again */
+  himem.freeMemory();
 
 }
 

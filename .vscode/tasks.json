@@ -146,6 +146,52 @@
 				"$platformio"
 			],
 			"group": "build"
+		},
+		{
+			"label": "PlatformIO Build",
+			"type": "shell",
+			"command": "platformio",
+			"args": [
+				"run"
+			],
+			"problemMatcher": [
+				"$platformio"
+			],
+			"group": "build"
+		},
+		{
+			"label": "PlatformIO Build",
+			"type": "shell",
+			"command": "platformio",
+			"args": [
+				"run"
+			],
+			"problemMatcher": [
+				"$platformio"
+			],
+			"group": "build"
+		},
+		{
+			"label": "PlatformIO Build",
+			"type": "shell",
+			"command": "platformio",
+			"args": [
+				"run"
+			],
+			"problemMatcher": [
+				"$platformio"
+			],
+			"group": "build"
+		},
+		{
+			"label": "Build freenove_esp32_wrover",
+			"type": "shell",
+			"command": "C:\\Users\\rickl\\.platformio\\penv\\Scripts\\platformio.exe run --environment freenove_esp32_wrover"
+		},
+		{
+			"label": "Build freenove_esp32_wrover",
+			"type": "shell",
+			"command": "C:\\Users\\rickl\\.platformio\\penv\\Scripts\\platformio.exe run --environment freenove_esp32_wrover"
 		}
 	]
 }

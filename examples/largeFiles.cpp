@@ -40,7 +40,7 @@ void setup() {
   ESP_LOGI("setup", "Buffer filled with data.");
 
 /* initialize HIMEM */
-  himem.init();
+  himem.create();
 
 /* write multiple files */
   for (int i = 0; i < 5; i++) {

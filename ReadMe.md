@@ -5,7 +5,12 @@ The ESP32 can direclty access external memories (PSRAM) that are <= 4 MiB.  Abov
 This library simplifies using HIMEM. Features:
     * packs buffers/files smaller than 32k in HIMEM not wasting any space
     * allows buffers to be larger than 32k. Only limit is available space
-    * allows HIMEM to be used like a RAM drive reading, writing and deleting files
+
+I use this library as a FiFo to save camera frames and verify that motion was detected before writing the data to an SD card.
+
+For a 15k file approximate HIMEM write time is 14 milliseconds and for an SD card write time is 62 milliseconds.
+
+The maximum number of files that can be written is 629.  The filename can be upto 40 charactors.
 
 ## Code Example
 
@@ -26,7 +31,7 @@ void setup() {
     fileBuf[i] = i % 256;
   }
 /* initialize HIMEM */
-  himem.init();
+  himem.create();
 
 /* write multiple files */
   for (int i = 0; i < 20; i++) {
