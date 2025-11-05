@@ -296,7 +296,7 @@ namespace HIMEMLIB {
             return;
         }
 
-        ESP_LOGI("freeMemory", "File system reset complete, freed %d files", fileIndex);   
+        //ESP_LOGI("freeMemory", "File system reset complete, freed %d files", fileIndex);   
         fileIndex = 0;
         cPage = 0;
         cOffset = 0;
