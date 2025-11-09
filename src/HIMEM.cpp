@@ -146,6 +146,12 @@ namespace HIMEMLIB {
         
         ESP_LOGI("cleanup", "All resources cleaned up successfully");
     }
+    int HIMEM::writeBaseline(String fileName, uint8_t* buf, uint32_t bytes) {
+        // Writes a baseline file in slot 0
+        fileIndex = 0; // Reset file index to overwrite slot 0
+        return writeFile(fileName, buf, bytes);
+    }
+
     /* ----------------------------------------------------------- 
     * Write File to HIMEM
     * @param fileName - file name output to String
