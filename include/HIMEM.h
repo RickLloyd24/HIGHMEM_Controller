@@ -61,7 +61,7 @@ namespace HIMEMLIB {
         int writeFile(int id, String fileName, uint8_t* buf, uint32_t bytes);      // Write file, return file ID or negative error code
         uint32_t readFile(int id, String &fileName, uint8_t* buf);                 // Return number of bytes read, 0 on error
         int writeBaseline(int id, String fileName, uint8_t* buf, uint32_t bytes);  // Writes a baseline file to slot id
-        void setBaseline(int id);                                                  // Sets baseline to the specified ID
+        int setBaseline(int id, uint8_t* buf, uint32_t bytes);                     // Sets baseline to the specified ID
                 
         // File Information
         int getID(String filename);                                        // Get file ID by name, -1 if not found   

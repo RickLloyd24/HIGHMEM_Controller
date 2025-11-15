@@ -32,10 +32,16 @@ void setup() {
   }
 
   /* set file number 2 as the baseline */  
-  himem.setBaseline(2);
+  int ret = himem.setBaseline(2, fileBuf, fileBufSize);                //need to provide buffer and size to setBaseline
+  if (ret < 0) {
+    ESP_LOGE("setup", "Failed to set baseline to file ID 2, return value %d", ret);
+    stop;
+  } else {
+    ESP_LOGI("setup", "Set baseline to file ID 2, return value %d", ret);
+  }
 
-/* Write multiple files starting with file 1 to not overwrite the baseline */
-  for (int i = 1; i < 100; i++) {
+/* Write multiple files starting with file 0  */
+  for (int i = 0; i < 100; i++) {
     String fileName = "file_" + String(i) + ".bin";
     int ret = himem.writeFile(i, fileName, fileBuf, fileBufSize);
   }
@@ -70,7 +76,6 @@ void setup() {
   }
   /* Free all HIMEM resources to start writing again */
   himem.freeMemory();
-
 }
 
 void loop() {

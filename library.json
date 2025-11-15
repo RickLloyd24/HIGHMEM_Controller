@@ -1,6 +1,6 @@
 {
   "name": "HIMEM_Controller",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "A comprehensive ESP32 camera motion detection library with JPEG decoding support",
   "keywords": [
     "esp32",

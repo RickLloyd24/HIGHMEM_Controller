@@ -98,7 +98,7 @@ namespace HIMEMLIB {
 
         ESP_LOGI("create", "HIMEM free space: %lu bytes", freespace());
         ESP_LOGI("create", "Maximum Number of Files/buffers: %d", MAX_HIMEM_FILES);
-        ESP_LOGI("create", "Last Page is %d", lastPage);
+        //ESP_LOGI("create", "Last Page is %d", lastPage);
         ESP_LOGI("create", "HIMEM initialized successfully");
     }
 
@@ -189,39 +189,66 @@ namespace HIMEMLIB {
     /* Save File Information and write file to HIMEM page */
         struct_HIMEM_FileInfo* info = nullptr;
         int page = lastPage - (id + 1);
-        ESP_ERROR_CHECK(esp_himem_map(memptr, rangeptr, page * ESP_HIMEM_BLKSZ, 0, ESP_HIMEM_BLKSZ, 0, (void**)&info));      
+        
+        esp_err_t ret = esp_himem_map(memptr, rangeptr, page * ESP_HIMEM_BLKSZ, 0, ESP_HIMEM_BLKSZ, 0, (void**)&info);
+        if (ret != ESP_OK) {
+            ESP_LOGE("writeBaseline", "Failed to map HIMEM page %d: %s", page, esp_err_to_name(ret));
+            return static_cast<int>(HimemError::INITIALIZATION_FAILED);
+        }
+        
         info->ID = id;
         info->fileSize = bytes;
         fileName.toCharArray(info->filename, fileName.length() + 1);
         info->page = page;
         info->offset = 0;
         memcpy((uint8_t*)info + sizeof(struct_HIMEM_FileInfo), buf, bytes);
-        ESP_ERROR_CHECK(esp_himem_unmap(rangeptr, info, ESP_HIMEM_BLKSZ));
+        
+        ret = esp_himem_unmap(rangeptr, info, ESP_HIMEM_BLKSZ);
+        if (ret != ESP_OK) {
+            ESP_LOGE("writeBaseline", "Failed to unmap HIMEM: %s", esp_err_to_name(ret));
+            return static_cast<int>(HimemError::INITIALIZATION_FAILED);
+        }
         bitSet(pageUsed, id);
         return page;
     }
 
     /* ----------------------------------------------------------- 
     * Set baseline File, copies identified baseline to first file location in HIMEM
-    * @param id - baseline page ID to write to file 0 location
+    * @param buf - provide a buffer to temporarily hold data to write 
+    * @param bytes - number of bytes available in the buffer
+    * @return id - write file ID, negative on error
     ----------------------------------------------------------------*/
-    void HIMEM::setBaseline(int id) {
+    int HIMEM::setBaseline(int id, uint8_t* buf, uint32_t bytes) {
         if (bitRead(pageUsed, id) != 1) {
             ESP_LOGE("setBaseline", "Baseline ID %d not set", id);
-            return;
+            return static_cast<int>(HimemError::INVALID_ID);
         }
     /* Read baseline File Information and write file to HIMEM page */
         HIMEM::freeMemory();                       // Free first file slot
         struct_HIMEM_FileInfo* info = nullptr;
         int page = lastPage - (id + 1);
-        ESP_ERROR_CHECK(esp_himem_map(memptr, rangeptr, page * ESP_HIMEM_BLKSZ, 0, ESP_HIMEM_BLKSZ, 0, (void**)&info));      
-        unsigned long bytes = info->fileSize;
+        
+        esp_err_t ret = esp_himem_map(memptr, rangeptr, page * ESP_HIMEM_BLKSZ, 0, ESP_HIMEM_BLKSZ, 0, (void**)&info);
+        if (ret != ESP_OK) {
+            ESP_LOGE("setBaseline", "Failed to map HIMEM page %d: %s", page, esp_err_to_name(ret));
+            return static_cast<int>(HimemError::INITIALIZATION_FAILED);
+        }
+        unsigned long fileBytes = info->fileSize;
+        if (bytes < fileBytes) {
+            ESP_LOGE("setBaseline", "Provided buffer too small for baseline data");
+            esp_himem_unmap(rangeptr, info, ESP_HIMEM_BLKSZ);
+            return static_cast<int>(HimemError::INSUFFICIENT_MEMORY);
+        }
         String filename = String(info->filename);
-        uint8_t* buf = (uint8_t*)info + sizeof(struct_HIMEM_FileInfo);
-        int ret = writeFile(0, filename, buf, bytes);
-        ESP_ERROR_CHECK(esp_himem_unmap(rangeptr, info, ESP_HIMEM_BLKSZ));
+        memcpy(buf, (uint8_t*)info + sizeof(struct_HIMEM_FileInfo), fileBytes);
+        ret = esp_himem_unmap(rangeptr, info, ESP_HIMEM_BLKSZ);
+        if (ret != ESP_OK) {
+            ESP_LOGE("setBaseline", "Failed to unmap HIMEM: %s", esp_err_to_name(ret));
+            return static_cast<int>(HimemError::INITIALIZATION_FAILED);
+        }
+        int writeRet = writeFile(0, filename, buf, bytes);
         pageUsed = 0;
-        return;
+        return writeRet;
     }
     /* ----------------------------------------------------------- 
     * Write File to HIMEM
@@ -257,13 +284,23 @@ namespace HIMEMLIB {
         }
     /* Save File Information */
         int slot = fileIndex;
-        ESP_ERROR_CHECK(esp_himem_map(memptr, rangeptr, lastPage * ESP_HIMEM_BLKSZ, 0, ESP_HIMEM_BLKSZ, 0, (void**)&records));      
+        esp_err_t ret = esp_himem_map(memptr, rangeptr, lastPage * ESP_HIMEM_BLKSZ, 0, ESP_HIMEM_BLKSZ, 0, (void**)&records);
+        if (ret != ESP_OK) {
+            ESP_LOGE("writeFile", "Failed to map HIMEM for file info: %s", esp_err_to_name(ret));
+            return static_cast<int>(HimemError::INITIALIZATION_FAILED);
+        }
+        
         records[slot].ID = slot;
         records[slot].fileSize = bytes;
         fileName.toCharArray(records[slot].filename, fileName.length() + 1);
         records[slot].page = cPage;
         records[slot].offset = cOffset;
-        ESP_ERROR_CHECK(esp_himem_unmap(rangeptr, records, ESP_HIMEM_BLKSZ));
+        
+        ret = esp_himem_unmap(rangeptr, records, ESP_HIMEM_BLKSZ);
+        if (ret != ESP_OK) {
+            ESP_LOGE("writeFile", "Failed to unmap HIMEM for file info: %s", esp_err_to_name(ret));
+            return static_cast<int>(HimemError::INITIALIZATION_FAILED);
+        }
         fileIndex++;
     /* Write File to HIMEM */
         uint32_t bytesToWrite = bytes;
@@ -271,13 +308,22 @@ namespace HIMEMLIB {
         
         while (bytesToWrite > 0) {
             uint8_t* ptr = nullptr;
-            ESP_ERROR_CHECK(esp_himem_map(memptr, rangeptr, cPage * ESP_HIMEM_BLKSZ, 0, ESP_HIMEM_BLKSZ, 0, (void**)&ptr));
+            ret = esp_himem_map(memptr, rangeptr, cPage * ESP_HIMEM_BLKSZ, 0, ESP_HIMEM_BLKSZ, 0, (void**)&ptr);
+            if (ret != ESP_OK) {
+                ESP_LOGE("writeFile", "Failed to map HIMEM page %d: %s", cPage, esp_err_to_name(ret));
+                return static_cast<int>(HimemError::INITIALIZATION_FAILED);
+            }
             
             uint32_t availableInPage = ESP_HIMEM_BLKSZ - cOffset;
             uint32_t chunkSize = (bytesToWrite <= availableInPage) ? bytesToWrite : availableInPage;
             
             memcpy(ptr + cOffset, buf + bufferOffset, chunkSize);
-            ESP_ERROR_CHECK(esp_himem_unmap(rangeptr, ptr, ESP_HIMEM_BLKSZ));
+            
+            ret = esp_himem_unmap(rangeptr, ptr, ESP_HIMEM_BLKSZ);
+            if (ret != ESP_OK) {
+                ESP_LOGE("writeFile", "Failed to unmap HIMEM page %d: %s", cPage, esp_err_to_name(ret));
+                return static_cast<int>(HimemError::INITIALIZATION_FAILED);
+            }
             
             bytesToWrite -= chunkSize;
             bufferOffset += chunkSize;
@@ -317,10 +363,15 @@ namespace HIMEMLIB {
         }
     /* Locate File Record */
         int slot = id;
-        ESP_ERROR_CHECK(esp_himem_map(memptr, rangeptr, lastPage * ESP_HIMEM_BLKSZ, 0, ESP_HIMEM_BLKSZ, 0, (void**)&records));
+        esp_err_t ret = esp_himem_map(memptr, rangeptr, lastPage * ESP_HIMEM_BLKSZ, 0, ESP_HIMEM_BLKSZ, 0, (void**)&records);
+        if (ret != ESP_OK) {
+            ESP_LOGE("readFile", "Failed to map HIMEM for file info: %s", esp_err_to_name(ret));
+            return 0;
+        }
+        
         if ( records[slot].ID != id ) {
             ESP_LOGE("readFile", "File ID mismatch expected ID %d, got ID %d", id, records[slot].ID);
-            ESP_ERROR_CHECK(esp_himem_unmap(rangeptr, records, ESP_HIMEM_BLKSZ));
+            esp_himem_unmap(rangeptr, records, ESP_HIMEM_BLKSZ);
             return 0;
         }
     /* Retrieve File Information */
@@ -328,20 +379,34 @@ namespace HIMEMLIB {
         uint32_t fileSize = records[slot].fileSize;
         uint16_t currentPage = records[slot].page;
         uint16_t currentOffset = records[slot].offset;
-        ESP_ERROR_CHECK(esp_himem_unmap(rangeptr, records, ESP_HIMEM_BLKSZ));
+        
+        ret = esp_himem_unmap(rangeptr, records, ESP_HIMEM_BLKSZ);
+        if (ret != ESP_OK) {
+            ESP_LOGE("readFile", "Failed to unmap HIMEM for file info: %s", esp_err_to_name(ret));
+            return 0;
+        }
 
         uint32_t bufferOffset = 0;
         uint32_t bytesToRead = fileSize;
     /* Read File from HIMEM */
         while (bytesToRead > 0) {
             uint8_t* ptr = nullptr;
-            ESP_ERROR_CHECK(esp_himem_map(memptr, rangeptr, currentPage * ESP_HIMEM_BLKSZ, 0, ESP_HIMEM_BLKSZ, 0, (void**)&ptr));
+            ret = esp_himem_map(memptr, rangeptr, currentPage * ESP_HIMEM_BLKSZ, 0, ESP_HIMEM_BLKSZ, 0, (void**)&ptr);
+            if (ret != ESP_OK) {
+                ESP_LOGE("readFile", "Failed to map HIMEM page %d: %s", currentPage, esp_err_to_name(ret));
+                return 0;
+            }
             
             uint32_t availableInPage = ESP_HIMEM_BLKSZ - currentOffset;
             uint32_t chunkSize = (bytesToRead <= availableInPage) ? bytesToRead : availableInPage;
             
             memcpy(buf + bufferOffset, ptr + currentOffset, chunkSize);
-            ESP_ERROR_CHECK(esp_himem_unmap(rangeptr, ptr, ESP_HIMEM_BLKSZ));
+            
+            ret = esp_himem_unmap(rangeptr, ptr, ESP_HIMEM_BLKSZ);
+            if (ret != ESP_OK) {
+                ESP_LOGE("readFile", "Failed to unmap HIMEM page %d: %s", currentPage, esp_err_to_name(ret));
+                return 0;
+            }
             
             bytesToRead -= chunkSize;
             bufferOffset += chunkSize;
