@@ -22,7 +22,7 @@ void setup() {
 /* write multiple files */
   for (int i = 0; i < 20; i++) {
     String fileName = "file_" + String(i) + ".bin";
-    int id = himem.writeFile(fileName, fileBuf, fileBufSize);
+    int id = himem.writeFile(i, fileName, fileBuf, fileBufSize);
     //ESP_LOGI("setup", "Wrote file %s with ID %d", fileName.c_str(), id);
   }
   Serial.printf("Wrote 20 files of %d bytes each\n", fileBufSize);

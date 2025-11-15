@@ -31,7 +31,7 @@ void setup() {
   while (himem.freespace() > fileBufSize + HIMEM_FILE_HEADER_SIZE) {
     //Serial.printf("Writing file %d, %d bytes free\n", numberOfFiles, himem.freespace());
     fileName = "file_" + String(numberOfFiles) + ".bin";
-    ret = himem.writeFile(fileName, fileBuf, fileBufSize);
+    ret = himem.writeFile(numberOfFiles, fileName, fileBuf, fileBufSize);
     if (ret < 0) {
       ESP_LOGE("setup", "Failed to write file %s: %s, error code: %d", 
         fileName.c_str(), HIMEMLIB::errorToString(static_cast<HIMEMLIB::HimemError>(ret)), ret);

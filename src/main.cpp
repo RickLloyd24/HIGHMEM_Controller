@@ -16,20 +16,33 @@ void setup() {
   for (int i = 0; i < fileBufSize; i++) {
     fileBuf[i] = i % 256;
   }
-/* initialize HIMEM */
+  Serial.printf("Generated test data of %d bytes\n", fileBufSize);
+  delay(1000);
+
+  /* initialize HIMEM */
   himem.create();
+  Serial.printf("HIMEM initialized\n");
+  delay(1000);
 
-/* write multiple files */
-  for (int i = 0; i < 20; i++) {
-    String fileName = "file_" + String(i) + ".bin";
-    int id = himem.writeFile(fileName, fileBuf, fileBufSize);
+/* write multiple baseline files */
+  for (int i = 0; i < 3; i++) {
+    String fileName = "Baseline_" + String(i) + ".jpg";
+    int ret = himem.writeBaseline(i, fileName, fileBuf, fileBufSize);
+    ESP_LOGI("setup", "Wrote baseline file %s with ID %d, return page %d", fileName.c_str(), i, ret);
   }
-  Serial.printf("Wrote 20 files of %d bytes each\n", fileBufSize);
-  himem.printMemoryStatus();
 
-/* read back "First In First Out" order and verify */
+  /* set file number 2 as the baseline */  
+  himem.setBaseline(2);
+
+/* Write multiple files starting with file 1 to not overwrite the baseline */
+  for (int i = 1; i < 100; i++) {
+    String fileName = "file_" + String(i) + ".bin";
+    int ret = himem.writeFile(i, fileName, fileBuf, fileBufSize);
+  }
+
+/* read back files starting with the baseline */
   bool match = true;
-  for (int i = 0; i < 20; i++) {
+  for (int i = 0; i < 3; i++) {
     String fileName = "";
     int bytesRead = himem.getFilesize(i);
     if (bytesRead == 0) {
@@ -50,6 +63,7 @@ void setup() {
         break;
       }
     }
+    ESP_LOGI("setup", "Read and verified file ID %d: %s (%d bytes)", i, fileName.c_str(), bytesRead);
   }
   if (match) {
     Serial.println("Data verification successful for all files");

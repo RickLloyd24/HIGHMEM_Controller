@@ -12,6 +12,8 @@ For a 15k file approximate HIMEM write time is 14 milliseconds and for an SD car
 
 The maximum number of files that can be written is 629.  The filename can be upto 40 charactors.
 
+Version 2.0.0 added baseline file capability.  Baselines are used to store camera data before motion occurs so the camera comparison is between a baseline file and the current frame.  Baseline file comparison is a more accurate way to detect motion.  The concept is to periodically store baseline files.  When motion is dectected save a baseline file that was captured before the motion occurred.  Upto 4 baseline files can be saved.  Baseline files do not use any memory because they will be overwritten with camera frames.
+
 ## Code Example
 
 #include "HIMEM.h"

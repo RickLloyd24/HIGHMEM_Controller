@@ -16,6 +16,7 @@ unsigned int lastPage = 0;                 // Last page number (reserved for rec
 uint16_t fileIndex = 0;                    // Current number of stored files
 uint16_t cPage = 0;                        // Current page for new writes
 uint16_t cOffset = 0;                      // Current offset within page
+uint8_t pageUsed = 0;                      // Bitmap of used pages
 
 namespace HIMEMLIB {
 
@@ -96,7 +97,9 @@ namespace HIMEMLIB {
         isInitialized = true;
 
         ESP_LOGI("create", "HIMEM free space: %lu bytes", freespace());
-        ESP_LOGI("create", "Maximun Number of Files/buffers: %d", MAX_HIMEM_FILES);
+        ESP_LOGI("create", "Maximum Number of Files/buffers: %d", MAX_HIMEM_FILES);
+        ESP_LOGI("create", "Last Page is %d", lastPage);
+        ESP_LOGI("create", "HIMEM initialized successfully");
     }
 
     /**
@@ -146,12 +149,80 @@ namespace HIMEMLIB {
         
         ESP_LOGI("cleanup", "All resources cleaned up successfully");
     }
-    int HIMEM::writeBaseline(String fileName, uint8_t* buf, uint32_t bytes) {
-        // Writes a baseline file in slot 0
-        fileIndex = 0; // Reset file index to overwrite slot 0
-        return writeFile(fileName, buf, bytes);
+    /* ----------------------------------------------------------- 
+    * Write baseline File to HIMEM
+    * @param id - baseline slot ID to write (0 - 3) upto 4 baseline pages
+    * @param fileName - file name of file
+    * @param buf - buffer with data to write 
+    * @param bytes - number of bytes to write
+    * @return page number, negative on error
+    ----------------------------------------------------------------*/
+    int HIMEM::writeBaseline(int id, String fileName, uint8_t* buf, uint32_t bytes) {
+ /* Check for Initialization and Safety */
+        if (!isInitialized) {
+            ESP_LOGE("writeFile", "HIMEM not initialized");
+            return static_cast<int>(HimemError::INITIALIZATION_FAILED);
+        }
+        if (buf == nullptr) {
+            ESP_LOGE("writeFile", "Buffer pointer is null");
+            return static_cast<int>(HimemError::INVALID_ID);
+        }
+        if (bytes == 0) {
+            ESP_LOGE("writeFile", "Cannot write 0 bytes");
+            return static_cast<int>(HimemError::FILE_TOO_LARGE);
+        }
+        
+    /* Check for Errors */
+        if (fileName.length() >= MAX_HIMEM_FILENAME_LEN) {
+            ESP_LOGE("writeFile", "File %s name too long, max is %d characters", 
+                fileName.c_str(), MAX_HIMEM_FILENAME_LEN - 1);
+            return static_cast<int>(HimemError::FILENAME_TOO_LONG);
+        }
+        if (id < 0 || id > 3) {
+            ESP_LOGE("writeFile", "Invalid baseline slot ID");
+            return static_cast<int>(HimemError::INVALID_ID);
+        }
+        if (bytes > ESP_HIMEM_BLKSZ - sizeof(struct_HIMEM_FileInfo)) {
+            ESP_LOGE("writeFile", "File is too large to fit in a single HIMEM slot, %d", ESP_HIMEM_BLKSZ);
+            return static_cast<int>(HimemError::FILE_TOO_LARGE);
+        }
+    /* Save File Information and write file to HIMEM page */
+        struct_HIMEM_FileInfo* info = nullptr;
+        int page = lastPage - (id + 1);
+        ESP_ERROR_CHECK(esp_himem_map(memptr, rangeptr, page * ESP_HIMEM_BLKSZ, 0, ESP_HIMEM_BLKSZ, 0, (void**)&info));      
+        info->ID = id;
+        info->fileSize = bytes;
+        fileName.toCharArray(info->filename, fileName.length() + 1);
+        info->page = page;
+        info->offset = 0;
+        memcpy((uint8_t*)info + sizeof(struct_HIMEM_FileInfo), buf, bytes);
+        ESP_ERROR_CHECK(esp_himem_unmap(rangeptr, info, ESP_HIMEM_BLKSZ));
+        bitSet(pageUsed, id);
+        return page;
     }
 
+    /* ----------------------------------------------------------- 
+    * Set baseline File, copies identified baseline to first file location in HIMEM
+    * @param id - baseline page ID to write to file 0 location
+    ----------------------------------------------------------------*/
+    void HIMEM::setBaseline(int id) {
+        if (bitRead(pageUsed, id) != 1) {
+            ESP_LOGE("setBaseline", "Baseline ID %d not set", id);
+            return;
+        }
+    /* Read baseline File Information and write file to HIMEM page */
+        HIMEM::freeMemory();                       // Free first file slot
+        struct_HIMEM_FileInfo* info = nullptr;
+        int page = lastPage - (id + 1);
+        ESP_ERROR_CHECK(esp_himem_map(memptr, rangeptr, page * ESP_HIMEM_BLKSZ, 0, ESP_HIMEM_BLKSZ, 0, (void**)&info));      
+        unsigned long bytes = info->fileSize;
+        String filename = String(info->filename);
+        uint8_t* buf = (uint8_t*)info + sizeof(struct_HIMEM_FileInfo);
+        int ret = writeFile(0, filename, buf, bytes);
+        ESP_ERROR_CHECK(esp_himem_unmap(rangeptr, info, ESP_HIMEM_BLKSZ));
+        pageUsed = 0;
+        return;
+    }
     /* ----------------------------------------------------------- 
     * Write File to HIMEM
     * @param fileName - file name output to String
@@ -159,7 +230,7 @@ namespace HIMEMLIB {
     * @param bytes - number of bytes to write
     * @return file Id number, negative on error
     ----------------------------------------------------------------*/
-    int HIMEM::writeFile(String fileName, uint8_t* buf, uint32_t bytes) {
+    int HIMEM::writeFile(int id, String fileName, uint8_t* buf, uint32_t bytes) {
     /* Check for Initialization and Safety */
         if (!isInitialized) {
             ESP_LOGE("writeFile", "HIMEM not initialized");

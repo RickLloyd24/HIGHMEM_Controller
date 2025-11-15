@@ -45,7 +45,7 @@ void setup() {
 /* write multiple files */
   for (int i = 0; i < 5; i++) {
     String fileName = "file_" + String(i) + ".bin";
-    int id = himem.writeFile(fileName, psramBuffer, fileBufSize);
+    int id = himem.writeFile(i, fileName, psramBuffer, fileBufSize);
   }
   ESP_LOGI("setup", "Wrote 5 files of %d bytes each", fileBufSize);
   ESP_LOGI("setup", "Available memory is %lu bytes.", himem.freespace());

@@ -58,9 +58,10 @@ namespace HIMEMLIB {
         unsigned long freespace();                                         // Get available HIMEM space
 
         // File Operations
-        int writeFile(String fileName, uint8_t* buf, uint32_t bytes);      // Write file, return file ID or negative error code
-        uint32_t readFile(int id, String &fileName, uint8_t* buf);         // Return number of bytes read, 0 on error
-        int writeBaseline(String fileName, uint8_t* buf, uint32_t bytes);  // Writes a baseline file in slot 0
+        int writeFile(int id, String fileName, uint8_t* buf, uint32_t bytes);      // Write file, return file ID or negative error code
+        uint32_t readFile(int id, String &fileName, uint8_t* buf);                 // Return number of bytes read, 0 on error
+        int writeBaseline(int id, String fileName, uint8_t* buf, uint32_t bytes);  // Writes a baseline file to slot id
+        void setBaseline(int id);                                                  // Sets baseline to the specified ID
                 
         // File Information
         int getID(String filename);                                        // Get file ID by name, -1 if not found   
@@ -79,6 +80,7 @@ namespace HIMEMLIB {
         uint16_t fileIndex = 0;
         uint16_t cPage;
         uint16_t cOffset;
+        uint8_t pageUsed;
         
         // Resource tracking for leak prevention
         bool isInitialized = false;
