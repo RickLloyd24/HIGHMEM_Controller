@@ -16,7 +16,6 @@ unsigned int lastPage = 0;                 // Last page number (reserved for rec
 uint16_t fileIndex = 0;                    // Current number of stored files
 uint16_t cPage = 0;                        // Current page for new writes
 uint16_t cOffset = 0;                      // Current offset within page
-uint8_t pageUsed = 0;                      // Bitmap of used pages
 
 namespace HIMEMLIB {
 
@@ -196,7 +195,7 @@ namespace HIMEMLIB {
             return static_cast<int>(HimemError::INITIALIZATION_FAILED);
         }
         
-        info->ID = id;
+        info->ID = page;
         info->fileSize = bytes;
         fileName.toCharArray(info->filename, fileName.length() + 1);
         info->page = page;
@@ -208,7 +207,6 @@ namespace HIMEMLIB {
             ESP_LOGE("writeBaseline", "Failed to unmap HIMEM: %s", esp_err_to_name(ret));
             return static_cast<int>(HimemError::INITIALIZATION_FAILED);
         }
-        bitSet(pageUsed, id);
         return page;
     }
 
@@ -219,10 +217,6 @@ namespace HIMEMLIB {
     * @return id - write file ID, negative on error
     ----------------------------------------------------------------*/
     int HIMEM::setBaseline(int id, uint8_t* buf, uint32_t bytes) {
-        if (bitRead(pageUsed, id) != 1) {
-            ESP_LOGE("setBaseline", "Baseline ID %d not set", id);
-            return static_cast<int>(HimemError::INVALID_ID);
-        }
     /* Read baseline File Information and write file to HIMEM page */
         HIMEM::freeMemory();                       // Free first file slot
         struct_HIMEM_FileInfo* info = nullptr;
@@ -246,8 +240,11 @@ namespace HIMEMLIB {
             ESP_LOGE("setBaseline", "Failed to unmap HIMEM: %s", esp_err_to_name(ret));
             return static_cast<int>(HimemError::INITIALIZATION_FAILED);
         }
+        if (page != info->ID) {
+            ESP_LOGE("setBaseline", "Baseline ID %d page mismatch, baseline not set", id);
+            return static_cast<int>(HimemError::INVALID_ID);
+        }
         int writeRet = writeFile(0, filename, buf, bytes);
-        pageUsed = 0;
         return writeRet;
     }
     /* ----------------------------------------------------------- 
